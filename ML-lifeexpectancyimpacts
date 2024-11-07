@@ -1,0 +1,319 @@
+---
+title: "LOOCV & LASSO Regression"
+author: "Meelad Dordoochi, Jace Higa, Alex Weirth"
+date: "2023-02-23"
+output: pdf_document
+---
+
+
+## Load Libraries
+```{r, message=FALSE}
+library(tidyverse)
+library(mgcv)
+library(magrittr)
+```
+
+## Import Data
+```{r}
+life_df <- read.csv("life_df.csv")
+```
+
+```{r}
+life_df <- na.omit(life_df)
+```
+
+### Testing & Training Data
+```{r}
+dim(life_df) # 1649
+
+set.seed(123)
+
+#70-30 Split
+trainInd<-sample(1:1649, 1155)
+
+life_df_train<-life_df[trainInd, ]
+life_df_test<-life_df[-trainInd, ]
+```
+
+
+```{r}
+colnames(life_df)
+```
+
+```{r}
+dim(life_df)
+```
+
+```{r}
+colnames(life_df)
+```
+
+```{r}
+#life_df <- life_df %>%
+  #rename("five_yr_deaths" = "X5yr_deaths")
+```
+
+```{r}
+str(life_df_train)
+```
+
+
+--------------------------------------------------------------------------------------------------------------------------------------------
+
+# Part I: Use LOOCV (Leave-One-Out Cross Validation) to perform best subsets and find the best number of variables to use.
+
+```{r}
+### best subset model
+library(leaps)
+life_bestsub.model <- regsubsets(life_exp_yrs ~ 
+                              adult_mortality + 
+                              infant_deaths + 
+                              alcohol + 
+                              perc_expend + 
+                              hep_b + 
+                              measles + 
+                              bmi + 
+                              X5yr_deaths + 
+                              polio + 
+                              tot_expend + 
+                              diphtheria + 
+                              hiv_aids + 
+                              gdp + 
+                              population + 
+                              thin_1to19 + 
+                              thin_5to9 + 
+                              inc_comp_resources + 
+                              schooling, 
+                            data = life_df_train, 
+                            nvmax = 18)
+
+summary(life_bestsub.model)
+```
+
+### Model Metrics
+```{r}
+#performance measures
+best18<-data.frame(nvars=1:18,
+  Cp     = summary(life_bestsub.model)$cp,
+  r2     = summary(life_bestsub.model)$rsq,
+  Adj_r2 = summary(life_bestsub.model)$adjr2,
+  BIC    =summary(life_bestsub.model)$bic)%>%
+  gather(metric, value, -c(nvars))
+
+ggplot(best18, aes(x=nvars, y=value, color=metric))+
+  geom_line()+
+  facet_grid(metric~., scales = "free")
+```
+
+#### Maximizing adj_r2
+```{r}
+which.max(summary(life_bestsub.model)$adjr2)
+```
+
+#### Minimizing BIC
+```{r}
+which.max(summary(life_bestsub.model)$bic)
+```
+
+#### Minimizing Cp
+```{r}
+which.max(summary(life_bestsub.model)$cp)
+```
+
+#### Maximizing r2
+```{r}
+which.max(summary(life_bestsub.model)$rsq)
+```
+
+## Cross Validation (LOOCV)
+
+```{r}
+life_df_train <- na.omit(life_df_train)
+life_df_test <- na.omit(life_df_test)
+dim(life_df_train)
+```
+
+
+```{r}
+##jack-knife validation (leave-one-out)
+
+##Function to get predictions from the regsubset function 
+predict.regsubsets <- function(object, newdata, id,...){
+  form  <- as.formula(object$call[[2]])
+  mat   <- model.matrix(form, newdata)
+  coefi <- coef(object, id=id)
+  mat[, names(coefi)]%*%coefi
+}
+
+#store the prediction error n=252
+jk.errors <- matrix(NA, 1164, 18) 
+
+for (k in 1:1164){
+  #uses regsubsets in the data with 1 observation removed 
+  best.model.cv <- regsubsets(life_exp_yrs ~ 
+                              adult_mortality + 
+                              infant_deaths + 
+                              alcohol + 
+                              perc_expend + 
+                              hep_b + 
+                              measles + 
+                              bmi + 
+                              X5yr_deaths + 
+                              polio + 
+                              tot_expend + 
+                              diphtheria + 
+                              hiv_aids + 
+                              gdp + 
+                              population + 
+                              thin_1to19 + 
+                              thin_5to9 + 
+                              inc_comp_resources + 
+                              schooling, 
+                            data = life_df_train[-k,], 
+                            nvmax = 18) 
+  
+  #Models with 18 predictors
+  for (i in 1:18){
+    #that was left out
+    pred <- predict.regsubsets(best.model.cv,                 #prediction in the obsv 
+                    life_df[k,], 
+                    id=i)
+    jk.errors[k,i] <- (life_df$life_exp_yrs[k]-pred)^2       #error in the obsv 
+  }
+}
+
+mse.models <- apply(jk.errors, 2, mean)
+#MSE estimation 
+```
+
+```{r}
+plot(mse.models,                              #Plot with MSEs
+     pch=19, type="b",
+     xlab="nr predictors",
+     ylab="MSE")
+```
+
+
+
+### Final Model
+The best final model has 9 variables which minimizes the MSE.
+```{r}
+loocv_finalmod <- lm(life_exp_yrs ~ adult_mortality + 
+                      infant_deaths + perc_expend +                         
+                      X5yr_deaths + hiv_aids + 
+                      inc_comp_resources + 
+                      schooling + hiv_deaths_cat, 
+                      data = life_df_train)
+```
+
+### Multicollinearity in the LASSO model?
+```{r}
+library(car)
+vif(lm(life_exp_yrs ~ adult_mortality + 
+                      infant_deaths + 
+                      perc_expend +                         
+                      X5yr_deaths + 
+                      hiv_aids + 
+                      inc_comp_resources + 
+                      schooling +
+                      hiv_deaths_cat, 
+                      data = life_df_train))
+```
+There are features with a VIF factor over 10 which means they definitely have strong multicollinearity. A regularization method will protect against this...
+
+--------------------------------------------------------------------------------------------------------------------------------------------
+
+# Part II: Perform LASSO regression
+
+```{r}
+## LASSO Model
+library(glmnet)
+library(faraway)
+set.seed(3)
+
+#LASSO REGRESSION
+
+dim(life_df)
+
+# Defining the model equation
+
+# Took out country because it wasn't doing anything and was using countries name to predict life exp
+X <- model.matrix(life_exp_yrs ~ year +
+                    status + adult_mortality +
+                    infant_deaths + alcohol +
+                    perc_expend + hep_b + measles +
+                    bmi + X5yr_deaths +
+                    polio + tot_expend +
+                    diphtheria + hiv_aids +
+                    gdp + population +
+                    thin_1to19 + thin_5to9+
+                    inc_comp_resources + schooling, data = life_df_train)[,-1]
+
+                 
+# Defining the outcome
+Y <- life_df_train$life_exp_yrs
+length(Y)
+head(Y)
+
+#Penalty type
+cv.lambda <- cv.glmnet(X, Y,
+                       alpha = 1,
+                       lambda=exp(seq(-5,8,.1)))
+
+plot(cv.lambda)                      
+cv.lambda$lambda.min
+
+# Line path
+plot(cv.lambda$glmnet.fit,
+     "lambda", label=FALSE)
+```
+
+## minimum/best lamba is 0.006737947
+
+```{r}
+## Final Model
+lmin <- cv.lambda$lambda.min
+lasso.model <- glmnet(x=X, y=Y,
+                      alpha = 1,
+                      lambda = lmin)
+lasso.model$beta
+```
+
+--------------------------------------------------------------------------------------------------------------------------------------------
+
+# Part III: Comparing the two final models from above
+
+```{r}
+loocv_finalmod
+summary(loocv_finalmod)
+```
+
+
+```{r}
+lasso.model$beta
+```
+Comparing the final models:
+
+- LASSO model contains all of the features
+- The best subset model showed that only 7 variables were needed to minimize the MSE
+- Different features had very different betas, for instance schooling's beta was 9.007 in LASSO while only being 0.74 in LOOCV.
+- Best subset model did not account for multicollinearity for which some of the VIF factors were very high.
+- Best subset model achieved an adjR2 value of 0.85, best among the milestones so far.
+
+## Comparing MSE's
+
+Best subset:
+```{r}
+library(caret)
+life_loocvtest<-predict(loocv_finalmod, life_df_test)
+(RMSE(life_loocvtest, life_df_test$life_exp_yrs, na.rm = TRUE))^2
+```
+
+LASSO Regression:
+
+Looking at the cv.lambda.lasso the minimum MSE value was 12.8 which was still higher than the best subset model. The MSE value for the minimum lambda of 0.0067 was higher around 17.
+
+
+Overall, the best subset linear model was able to achieve an adjusted R2 value of 0.85 and MSE of 12.51 which was the smallest compared to the lasso model, therefore the best subset model performed most accurately.
+
+

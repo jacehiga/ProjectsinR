@@ -1,0 +1,539 @@
+---
+title: "Classification Milestone 2"
+author: "Alex Weirth, Jace Higa, Meelad Doroodchi, Charlie Weibe"
+date: "2023-03-22"
+output: pdf_document
+---
+---------------------------------------------------------------------------------------------------------------------------------
+
+# Part I - Explore the Data
+
+## Step 0 - Pairs Plot:
+
+```{r}
+heart <- read.csv("heart_clean.csv")
+```
+
+```{r, message=FALSE}
+library(GGally)
+
+ggpairs(heart, columns=c(1,4,5,8,9),
+        ggplot2::aes(colour = as.factor(HeartDisease)))
+```
+
+---------------------------------------------------------------------------------------------------------------------------------
+
+## Step 1 - Identifying features:
+
+**Outcome:** HeartDisease - This is the outcome variable of either "0" for a person diagnosed with no heart disease or a "1" indicating that person was diagnosed by a doctor with a form of heart disease.
+
+**Numeric Feature:** MaxHR - Numeric feature of the maximum heart rate (bpm) that a person achieved at the time of examination.
+
+**Categorical Feature:** ExcerciseAngina - This is a categorical feature that was determined at the time of examination with either a "1" indicating the patient had Angina from exercise or "0" indicating the patient did not have it. Exercise Angina is a condition where a patient experiences chest neck or jaw pain after or during a workout indicating a person's blood flow cannot be maintained at high enough levels. this is usually due to cholesterol-clogged coronary arteries.
+
+## Step1B - Scaling the Numeric Feature
+
+### For KNN we want to add a MaxHRNorm that is scaled:
+
+```{r}
+normalize <- function(x) {
+  return ((x - min(x)) / (max(x) - min(x))) }
+
+heart$MaxHRNorm <- normalize(heart$MaxHR)
+min(heart$MaxHRNorm)
+max(heart$MaxHRNorm)
+```
+
+Our explanatory feature MaxHR is now normalized. Now, we are not using all the features in our KNN model only two. So I am going to create a new dataframe that contains only our outcome "HeartDisease", our numeric explanantory "MaxHRNorm", and our categorical feature "ExcerciseAngina" which needs to be encoded as a factor.
+
+```{r, message=FALSE}
+library(dplyr)
+heartKnn <- select(heart, MaxHRNorm, ExerciseAngina, HeartDisease)
+heartKnn$ExerciseAngina <- as.factor(heartKnn$ExerciseAngina)
+str(heartKnn)
+```
+
+---------------------------------------------------------------------------------------------------------------------------------
+
+## Step 2 - Stratified splitting for training and testing sets:
+
+```{r}
+## PARTITION DATA
+heart0<-heartKnn%>%
+  filter(HeartDisease==0)
+dim(heart0)
+
+heart1<-heartKnn%>%
+  filter(HeartDisease==1)
+dim(heart1)
+
+## SAMPLE INDECES
+set.seed(100)
+heart_sample0<-sample(1:410, 287)
+heart_sample1<-sample(1:508, 356)
+
+## TRAINING AND TESTING SETS
+trainStrat<-rbind(heart0[heart_sample0, ],
+                  heart1[heart_sample1, ])
+
+testStrat<-rbind(heart0[-heart_sample0, ],
+                  heart1[-heart_sample1, ])
+
+## PROPORITON OF OUTCOME
+mean(trainStrat$HeartDisease)
+```
+
+```{r}
+mean(testStrat$HeartDisease)
+```
+
+Now we have training and testing sets that are stratified and a numeric explanatory feature and can implement the KNN algorithm. The means for the testStrat$HeartDisease$ and trainStrat$HeartDisease$ are 0.001 different which is acceptable.
+
+---------------------------------------------------------------------------------------------------------------------------------
+
+# Part II - K Nearest Neighbors
+
+## Step 3 - K Nearest Neighbors (k=3):
+
+```{r}
+library(class)
+```
+
+
+```{r}
+### Specify Arguments
+trainFea<-trainStrat%>%
+  select(-HeartDisease)
+
+testFea<-testStrat%>%
+  select(-HeartDisease)
+
+trainOut<-trainStrat$HeartDisease
+testOut<-testStrat$HeartDisease
+
+set.seed(1234)
+knn.heartPred=knn(train = trainFea,
+             test = testFea,
+             cl = trainOut,
+             k=3)
+```
+
+---------------------------------------------------------------------------------------------------------------------------------
+
+## Step 4 - Confusion Matrix:
+
+```{r}
+cmHeart<-table(knn.heartPred,testOut)
+cmHeart
+```
+
+### Correct Rate
+```{r}
+mean(knn.heartPred==testOut)
+```
+70.2% Correct Rate
+
+### Error Rate
+```{r}
+1-mean(knn.heartPred==testOut)
+```
+29.8% Error Rate
+
+### False Positive Rate: 37/275 = 13.5%
+
+### False Negatives: 45/275 = 16.4%
+
+### Sensitivity
+```{r}
+### Sensitivity = True Positive / (True Positive + False Negative)
+### cm: 1=TN 2=FP 3=FN 4=TP
+
+cmHeart[4]/(cmHeart[4] + cmHeart[3])
+```
+
+### Specificity
+```{r}
+### Specificity = True Negative / (False Positive + True Negative)
+
+cmHeart[1]/(cmHeart[2] + cmHeart[1])
+```
+
+---------------------------------------------------------------------------------------------------------------------------------
+
+## Step 5 - Grid Search for best "k":
+
+```{r}
+## Whats the best k
+## Pick a neighborhood
+set.seed(123)
+error <- c()
+for (i in 1:30){
+  knnHeart<- knn(train = trainFea,
+                test = testFea,
+                cl = trainOut, 
+                k = i)
+  error[i] = 1- mean(knnHeart==testOut)
+}
+
+ggplot(data = data.frame(error), aes(x = 1:30, y = error)) +
+  geom_line(color = "Blue")+
+  xlab("Neighborhood Size")
+```
+```{r}
+which.min(error)
+```
+#### The best model will contain 14 neighbors.
+
+---------------------------------------------------------------------------------------------------------------------------------
+
+### Fit the best Model:
+
+```{r}
+set.seed(1234)
+knn.heartPredFinal=knn(train = trainFea,
+             test = testFea,
+             cl = trainOut,
+             k=14)
+```
+
+---------------------------------------------------------------------------------------------------------------------------------
+
+## Step 6 - Confusion Matrix for best model:
+
+```{r}
+knnFinalCM<-table(knn.heartPredFinal,testOut)
+knnFinalCM
+```
+
+### Correct Rate
+```{r}
+knnFinalCR <- mean(knn.heartPredFinal==testOut)
+knnFinalCR
+```
+75% Correct Rate - Increased from 70.2%
+
+### Error Rate
+```{r}
+1-mean(knn.heartPredFinal==testOut)
+```
+25% Error Rate - Decreased from 29.8%
+
+### False Positive Rate: 25/275 = 9% (decreased from 13.5%)
+
+### False Negative Rate: 44/275 = 16% (decreased from 16.4%)
+
+### Sensitivity
+```{r}
+### Sensitivity = True Positive / (True Positive + False Negative)
+### cm: 1=TN 2=FP 3=FN 4=TP
+
+knnFinalCM[4]/(knnFinalCM[4] + knnFinalCM[3])
+```
+Increased from 0.703
+
+### Specificity
+```{r}
+### Specificity = True Negative / (False Positive + True Negative)
+
+knnFinalCM[1]/(knnFinalCM[2] + knnFinalCM[1])
+```
+Increased even more dramatically from 0.699
+
+---------------------------------------------------------------------------------------------------------------------------------
+
+# Part III - Logistic Regression
+
+```{r message=FALSE}
+
+library(caret)
+# Split the data into training and test set
+set.seed(314)
+caretSamp <- createDataPartition(heart$HeartDisease ,
+                                        p = 0.7,
+                                        list = FALSE)
+
+## SPLIT TESTING AND TRAINING
+trainLR  <- heart[caretSamp, ]
+testLR <- heart[-caretSamp, ]
+```
+
+## Step 7: Simple Logistic Regression
+
+```{r}
+modLR <- glm(HeartDisease ~ Cholesterol, data=trainLR, family="binomial")
+summary(modLR)
+
+slope <- modLR$coefficients[2]
+exp(slope)
+```
+
+### Plot model:
+
+```{r}
+ggplot(data=trainLR, aes(x=Cholesterol, fill=factor(HeartDisease)))+
+  geom_density(alpha=.5)
+
+ggplot(data=trainLR, aes(x=Cholesterol, y=HeartDisease))+
+  geom_point()+
+  geom_line(aes(x = Cholesterol, y = modLR$fitted), color="blue")
+```
+
+#### Our first model is using cholesterol as a predictor of heart disease. The intercept is 1.15 and after back-transforming, we get a slope for cholesterol of 0.995, meaning that for every 1 unit increase in cholesterol there is a .995 increase on the likelihood of the patient acquiring heart disease. Cholesterol does have a significant effect on heart disease in our training data set.
+
+## Step 9 - Confusion matrix at 0.5 threshold:
+
+```{r}
+pred1R<-predict(modLR, newdata = testLR, type="response")
+head(pred1R)
+
+conf_mat<-data.frame(testHeartDisease=testLR$HeartDisease, predHeart=pred1R>.5)
+table(conf_mat$predHeart, conf_mat$testHeartDisease)
+
+mean(conf_mat$predHeart == conf_mat$testHeartDisease)
+```
+
+Correct rate of 50%
+
+## Step 10 - Multiple Logistic Regression Model:
+
+```{r}
+modMulti<-glm(HeartDisease ~.,
+          data = trainLR, family = "binomial")
+
+summary(modMulti)
+```
+
+## Step 11 - Stepwise variable selection:
+
+```{r, message = FALSE}
+library(bestglm)
+step(modMulti)
+```
+
+Backwards Selection: Our model starts with all variables included then takes individual predictors away 1 by 1 depending on their significance. Resting ECG is the least significant on heart disease, and was the first variable taken away, then Resting Blood Pressure. The best combination of the variables to predict heart disease are Age, Sex, ChestPainType, Cholesterol, Fasting Blood Sugar, Exercise Angina, Oldpeak, and ST_Slope. We learned that these variables are the most impactful on whether a patient has heart disease or not, but were suprised that Resting Blood Pressure was the second variable removed from the stepwise selection process; we imagined that it would be more significant to predicting heart disease.
+
+## Step 12 - Final Model:
+
+```{r}
+lmfinal <- glm(HeartDisease ~ Age + Sex + ChestPainType + Cholesterol + FastingBS + ExerciseAngina + Oldpeak + ST_Slope, data = trainLR, family="binomial")
+
+predfinal<-predict(lmfinal, newdata = testLR, type="response")
+head(predfinal)
+
+conf_mat_final<-data.frame(testHeartDisease=testLR$HeartDisease, predHeart=predfinal>.5)
+mlrFinalCm <- table(conf_mat_final$predHeart, conf_mat_final$testHeartDisease)
+mlrFinalCm
+
+mlrFinalCR <- mean(conf_mat_final$predHeart == conf_mat_final$testHeartDisease)
+mlrFinalCR
+```
+88% Correct Rate.
+
+---------------------------------------------------------------------------------------------------------------------------------
+
+# Part IV - Trees
+
+Our outcome variable HeartDisease has to be encoded as a factor.
+```{r}
+heart$HeartDisease <- as.factor(heart$HeartDisease)
+str(heart)
+```
+
+## Splitting into Training and Testing
+```{r}
+library(caret)
+## Split the data into training and test set
+set.seed(3)
+caretSamp <- createDataPartition(heart$HeartDisease,
+                                        p = 0.7,
+                                        list = FALSE)
+
+train <- heart[caretSamp, ]
+test<- heart[-caretSamp, ]
+```
+
+## Step 13 - Fitting Classification Tree and observing patterns:
+
+```{r}
+set.seed(3)
+library(rpart)
+
+classTree<- rpart(HeartDisease ~., data = train, method = "class")
+
+## Plot Tree
+library(rpart.plot)
+rpart.plot(classTree)
+
+### Plot CP
+plotcp(classTree)
+
+printcp(classTree)
+
+
+## Best CP
+minCP<-classTree$cptable[which.min(classTree$cptable[,"xerror"]),"CP"]
+```
+It initially separates the data by the variable ST_Slope, which is the ST segment shift that is measured by an increase in exercise. It has been found to be the biggest indicator or coronary artery disease. It seems to be the strongest indicator of heart disease. It then separates into many other variables, and though we can explain each and every one, there are many individual cases, it does seem that chest pain type is a re-occuring indicator which does hint to our original research question of which types of chest pain are the best indicators of heart disease.
+
+
+## Step 14 - Finding best CP and replotting our tree:
+
+```{r}
+library(rpart.plot)
+
+prune_classTree <- prune(classTree, cp = minCP)
+rpart.plot(prune_classTree)
+```
+
+## Step 15 - Confusion Matrix & calculating correct rate:
+
+```{r}
+predTree1<-predict(prune_classTree, test, type = "class")
+
+## Confusion Matrix
+cmTree1<-table(test$HeartDisease, predTree1)
+cmTree1
+
+## Correct Rate
+mean(test$HeartDisease == predTree1)
+```
+80% correct rate.
+
+
+## Step 16 - Tree Agreggation Using Bagging:
+```{r message=FALSE}
+library(tidyverse)
+
+### BAG
+set.seed(3)
+caretBag <- train(HeartDisease ~.,
+               data = train,
+               method = "treebag",
+               trControl = trainControl("cv", number = 10),
+               importance = TRUE
+)
+
+predCaretBag <- caretBag %>% predict(test)
+```
+
+The number of features is equal to the parameters considered for each split.
+
+```{r}
+caretBag$finalModel
+```
+
+The bagging used 25 samples.
+
+### Step 16B - Variable Importance Plot:
+```{r}
+library(vip)
+
+vip(caretBag)
+```
+As our previous tree diagrams have shown, the variable ST_Slope seemed to be one of the most important, followed by Oldpeak and ExcerciseAngina.
+
+## Step 17 - Confusion Matrix & correct rate for aggregated model:
+
+```{r}
+## Confusion Matrix
+treeFinalCm <- table(predCaretBag, test$HeartDisease)
+treeFinalCm
+
+## Correct Rate
+treeFinalCR <- mean(predCaretBag == test$HeartDisease)
+treeFinalCR
+```
+84% Correct Rate.
+
+---------------------------------------------------------------------------------------------------------------------------------
+
+# Part V - Compare
+
+Confusion Matrix of Final KNN Model:
+```{r}
+knnFinalCM
+knnFinalCR
+```
+
+---------------------------------------------------------------------------------------------------------------------------------
+
+Confusion Matrix of Final MLR Model:
+```{r}
+mlrFinalCm
+mlrFinalCR
+```
+
+---------------------------------------------------------------------------------------------------------------------------------
+
+Confusion Matrix of Final Tree Model:
+```{r}
+treeFinalCm
+treeFinalCR
+```
+
+---------------------------------------------------------------------------------------------------------------------------------
+
+# Results Table
+```{r}
+model_df <- data.frame(
+  "Model Name" = c("KNN MODEL (k = 14)", "MLR MODEL (backwards selection)", "TREE MODEL (bagging)"),
+  "Correct Rate" = c("75%", "88.7%", "84%"), 
+  "False Positives" = c("25", "14", "28"),
+  "False Negatives" = c("44", "17", "16")
+)
+
+# Print the data frame as a table
+print(model_df)
+```
+
+## Discussion:
+
+Interpreting these results we can see that multiple logistic regression had the best correct rate on the testing data followed by decision tree aggregation using bagging, and then finally the KNN model after a grid search for the best neighborhood. Each method has its own pros and cons for example:
+
+### KNN:
+
+Pros:
+
+- Between all of our models is the simplest to understand to the widest audience which could be best if you are attempting to explain to someone why they are predicted to have heart disease.
+
+Cons:
+
+- Our correct rate was the smallest at 75%, also the number of false negatives was LARGEST at 44 and when diagnosing heart disease we want to limit false negatives so someone with heart disease does not go untreated or unaware.
+
+### MLR Backwards Selection:
+
+Pros:
+
+- Our highest correct rate at 88.7% which in turn also meant fewer false negatives.
+
+Cons:
+
+- The model still favored false negatives rather than false positives.
+
+### Decision Tree Aggregation using Bagging:
+
+Pros:
+
+- A very high correct rate not far off of our multiple logistic regression model
+
+- FEWER false negatives and the model favored false positives over false negatives!
+
+Cons:
+
+- The method of tree aggregation can be black-boxy and could be very hard to explain to some people when trying to understand why they are predicted to have or not have heart disease.
+
+## Conclusion:
+
+The model that seems to perform best for us considering the context of the data is our Tree Model using Bagging We do sacrifice 4.7% accuracy however limiting false negatives was a principal part of our project and being able to limit those errors are huge even to the point of possibly saving a life by catching heart disease in someone that is able to make changes in their lifestyle and become healthier.
+
+
+```{r}
+library(MASS)
+
+# Fit the model
+heartLDA <- lda(HeartDisease~., data = train27)
+lda27
+```
+
+
+
